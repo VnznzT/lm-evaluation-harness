@@ -36,8 +36,10 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────
 
 # CSCS SwissAI serving endpoint
-API_URL = "https://api.swissai.cscs.ch/v1"
-JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+# API_URL = "https://api.swissai.cscs.ch/v1"
+API_URL = "http://172.28.35.68:8080/v1/"  # internal URL for CSCS cluster access
+# JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+JUDGE_MODEL = "Qwen/Qwen3-235B-A22B-Instruct-2507-FhUK"
 
 # Number of concurrent threads hitting the judge API.
 # vLLM with continuous batching on GH200s can handle high concurrency.
@@ -787,6 +789,7 @@ def arena_hard_agg(items):
         f"using {JUDGE_MODEL} as judge via CSCS API "
         f"({total_calls} judge calls with {_JUDGE_MAX_WORKERS} concurrent workers)..."
     )
+    logger.info(f"Scoring method: {SCORING_METHOD} (env ARENA_HARD_SCORING_METHOD)")
 
     # Build prompts and run judge calls
     tasks = _build_judge_tasks(valid_items)
