@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # CSCS SwissAI serving endpoint
 # API_URL = "https://api.swissai.cscs.ch/v1"
-API_URL = "http://172.28.33.52:8080/v1"  # internal URL for CSCS cluster access
+API_URL = "http://172.28.32.80:8080/v1"  # internal URL for CSCS cluster access
 # JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 JUDGE_MODEL = "Qwen/Qwen3.5—27B-vthoma"
 
@@ -291,7 +291,7 @@ def _judge_call(client, uid, round_num, user_prompt):
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=4096,
+            max_tokens=6000,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return (uid, round_num, resp.choices[0].message.content)
