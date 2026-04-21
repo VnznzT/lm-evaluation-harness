@@ -36,10 +36,8 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────
 
 # CSCS SwissAI serving endpoint
-# API_URL = "https://api.swissai.cscs.ch/v1"
-API_URL = "http://172.28.32.80:8080/v1"  # internal URL for CSCS cluster access
-# JUDGE_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
-JUDGE_MODEL = "Qwen/Qwen3.5—27B-vthoma"
+API_URL = "https://api.swissai.cscs.ch/v1"
+JUDGE_MODEL = "Qwen/Qwen3.5—27B"
 
 # Number of concurrent threads hitting the judge API.
 # vLLM with continuous batching on GH200s can handle high concurrency.
