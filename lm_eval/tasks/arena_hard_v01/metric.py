@@ -1,6 +1,6 @@
 """Arena-Hard v0.1 metric for lm-evaluation-harness.
 
-Implements pairwise judge evaluation using Llama-3.3-70B-Instruct as judge,
+Implements pairwise judge evaluation using Qwen3.5—27B as judge,
 served via the CSCS SwissAI API.
 
 The evaluation follows the Arena-Hard protocol:
@@ -18,7 +18,8 @@ Prerequisites:
     openai
     huggingface_hub
     numpy
-    CSCS_SERVING_API environment variable (with access to Llama-3.3-70B-Instruct)
+    CSCS_SERVING_API environment variable (with access to Qwen3.5—27B judge endpoint. 
+                                Make sure this model is served on the CSCS platform.)
 """
 
 import concurrent.futures
@@ -41,7 +42,7 @@ JUDGE_MODEL = "Qwen/Qwen3.5—27B"
 
 # Number of concurrent threads hitting the judge API.
 # vLLM with continuous batching on GH200s can handle high concurrency.
-_JUDGE_MAX_WORKERS = 32 #128
+_JUDGE_MAX_WORKERS = 64
 
 # Number of retries for the OpenAI client (covers transient HTTP errors).
 _CLIENT_MAX_RETRIES = 10
