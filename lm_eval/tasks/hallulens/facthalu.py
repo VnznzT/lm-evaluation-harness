@@ -88,11 +88,42 @@ class FactHalu:
 
         self.verifier = claim_verifier
         self.verifier_tokenizer = claim_verifier_tokenizer
+        home_dir = os.path.expanduser("~")
+        cache_dir = os.path.join(home_dir, "facthalu_cache")
+
+        self.CACHE_BASE_PATH = cache_dir
+        self.embedded_cache_path = os.path.join(cache_dir, "embedded_cache.json")
+
+        self.retrieval = LongWikiRetrieval(
+            self.db,
+            cache_base_path=self.CACHE_BASE_PATH,
+            embed_cache_path=self.embedded_cache_path,
+            retrieval_type="gtr-t5-large",
+            batch_size=64,
+        )
 
     def run(self, prompt, generation, title, reference=None):
         """
         Evaluate longwiki from model error.
-        Saves results to output_csv as jsonl with one line per prompt.
+        Full pipeline: extract claims, prewarm, verify, score.
+        For batched processing, use extract_phase + bulk_prewarm + verify_and_score_phase instead.
+        """
+        # Phase 1: extraction
+        _generation, all_claims, final_result = self.extract_phase(
+            prompt, generation, title, reference
+        )
+
+        if not all_claims:
+            return final_result
+
+        # Phase 2: prewarm + verify + score
+        return self.verify_and_score_phase(_generation, all_claims, final_result)
+
+    def extract_phase(self, prompt, generation, title, reference=None):
+        """
+        Phase 1: Abstention check + claim extraction (API calls only, no GPU).
+        Returns (Generation, list_of_claims, partial_result).
+        If abstained or no claims, list_of_claims will be empty and partial_result is final.
         """
         final_result = {
             "abstained": np.nan,
@@ -100,7 +131,6 @@ class FactHalu:
             "recall": np.nan,
             "f1": np.nan,
         }
-        # initiate generation object
         _generation = Generation(generation=generation, prompt=prompt)
         if reference is not None:
             _generation.reference = reference
@@ -117,7 +147,7 @@ class FactHalu:
         if _generation.abstain is not None:
             if _generation.abstain:
                 final_result["abstained"] = 1
-                return final_result
+                return _generation, [], final_result
             else:
                 final_result["abstained"] = 0
 
@@ -127,37 +157,64 @@ class FactHalu:
         if _generation.abstain is not None:
             if _generation.abstain:
                 final_result["abstained"] = 1
-                return final_result
+                return _generation, [], final_result
 
-        ### [[STEP #3]] Verify claims
-        all_verification_responses = self.verify_claims(all_claims)
+        return _generation, all_claims, final_result
+
+    def bulk_prewarm(self, all_claims_tuples):
+        """
+        Single prewarm for ALL claims across ALL documents.
+        Call this once after extract_phase for all items, before verify_and_score_phase.
+
+        Args:
+            all_claims_tuples: list of (topic, claim_text, question) from all documents
+        """
+        if not all_claims_tuples:
+            return
+        questions = list(set([q for _, _, q in all_claims_tuples]))
+        print(f"Prewarming NER cache for {len(all_claims_tuples)} claims across {len(questions)} unique questions...", flush=True)
+        self.retrieval.make_ner_cache(questions)
+
+        print(f"Prewarming retrieval cache with {len(all_claims_tuples)} claim tuples...", flush=True)
+        self.retrieval.prewarm(all_claims_tuples)
+
+    def verify_and_score_phase(self, _generation, all_claims, final_result):
+        """
+        Phase 2: Verify claims and compute metrics.
+        Assumes bulk_prewarm has already been called for these claims.
+        """
+        if not all_claims:
+            return final_result
+
+        ### [[STEP #3]] Verify claims (retrieval should be cache hits after bulk prewarm)
+        print(f"Verifying {len(all_claims)} claims for current document, this should be cache hits...", flush=True)
+        all_verification_responses = self._verify_claims_no_prewarm(all_claims)
 
         for claim, verification_response in zip(all_claims, all_verification_responses):
             claim.is_supported = verification_response["is_supported"]
 
-        ### [[[ STEP #4]]] Calculate metrics: precision, recall@k, f1, response ratio
-
+        ### [[STEP #4]] Calculate metrics
         final_results = []
-        for sentence in generation.sentences:
+        for sentence in _generation.sentences:
             if not sentence.claims:
                 final_results.append(
                     {
-                        "prompt": generation.prompt,
+                        "prompt": _generation.prompt,
                         "is_supported": None,
                         "claim": "no claims",
                         "sentence": sentence.sentence,
-                        "title": generation.topic,
+                        "title": _generation.topic,
                     }
                 )
             else:
                 for claim in sentence.claims:
                     final_results.append(
                         {
-                            "prompt": generation.prompt,
+                            "prompt": _generation.prompt,
                             "is_supported": claim.is_supported,
                             "claim": claim.claim,
                             "sentence": sentence.sentence,
-                            "title": generation.topic,
+                            "title": _generation.topic,
                         }
                     )
         final_results_df = pd.DataFrame(final_results)
@@ -235,7 +292,7 @@ class FactHalu:
                 sentence.claims = []
                 continue
 
-            parsed_claim_extraction = utils.parse_claim_extraction(claim_extraction)
+            parsed_claim_extraction = base_utils.parse_claim_extraction(claim_extraction)
 
             sentence_claims = []
             for claim_text in parsed_claim_extraction:
@@ -260,18 +317,21 @@ class FactHalu:
         return all_claims
 
     def verify_claims(self, all_claims: List[Claim]):
-        # 1. Prepare the prompt for verification
-        retrieval = LongWikiRetrieval(
-            self.db,
-            cache_base_path=self.CACHE_BASE_PATH,
-            embed_cache_path=self.embedded_cache_path,
-            retrieval_type="gtr-t5-large",
-            batch_size=64,
-        )
+        """Original verify_claims with built-in prewarm. Kept for backward compatibility."""
         questions = list(set([claim.question for claim in all_claims]))
-        retrieval.make_ner_cache(questions)
+        self.retrieval.make_ner_cache(questions)
+
+        self.retrieval.prewarm(
+            [(claim.topic, claim.claim, claim.question) for claim in all_claims]
+        )
+
+        return self._verify_claims_no_prewarm(all_claims)
+
+    def _verify_claims_no_prewarm(self, all_claims: List[Claim]):
+        """Verify claims assuming NER cache and prewarm are already done."""
+        # 1. Build retrieval prompts
         for claim in tqdm(all_claims):
-            passages = retrieval.get_topk_related_passages(
+            passages = self.retrieval.get_topk_related_passages(
                 topic=claim.topic, claim=claim.claim, question=claim.question, k=5
             )
             context = ""
@@ -291,7 +351,7 @@ class FactHalu:
         claim_verification_res = []
         for i in range(0, len(verification_prompts), 100):
             batch_prompts = verification_prompts[i : i + 100]
-            batch_results = utils.generate_batch(
+            batch_results = base_utils.generate_batch(
                 batch_prompts,
                 self.verifier,
                 tokenizer=self.verifier_tokenizer,
@@ -304,7 +364,7 @@ class FactHalu:
         claim_verification_results = base_utils.jsonify_ans_longwiki(
             raw_responses=claim_verification_res,
             eval_prompts=verification_prompts,
-            evaluator=self.verification_model,
+            model=self.verifier,
             tokenizer=self.verifier_tokenizer,
             key="is_supported",
         )

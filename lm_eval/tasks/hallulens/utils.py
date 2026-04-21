@@ -4,12 +4,15 @@ from typing import List
 import torch
 import gc
 import requests
+from requests.adapters import HTTPAdapter
 import os
 import time
+import aiohttp
 
-API_URL = "https://api.swissai.cscs.ch/v1"
+# API_URL = "https://api.swissai.cscs.ch/v1"
+API_URL = "http://172.28.43.112:8080/v1"
 API_KEY = os.getenv("CSCS_SERVING_API")
-MODEL_NAME = "meta-llama/Llama-3.3-70B-Instruct"
+MODEL_NAME = "Qwen/Qwen3.5-27B"
 
 def try_remote_generate(prompt, temperature=0.0, max_tokens=512, max_retries=10):
     """
@@ -171,6 +174,7 @@ def generate_batch(
         del inputs  # Free memory
         clear_memory()  # Clear memory after generation
         return result
+
 
 
 def jsonify_ans_longwiki(raw_responses, eval_prompts, model, tokenizer, key):
